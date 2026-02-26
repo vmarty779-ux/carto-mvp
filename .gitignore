@@ -1,0 +1,19 @@
+node_modules
+dist
+.DS_Store
+
+# Fichiers lourds / non nécessaires au code
+*.mp4
+*.mov
+*.avi
+*.png
+*.jpg
+*.jpeg
+*.qgz
+*.gpkg
+*.zip
+*.7z
+
+# Données carto (on garde seulement des versions légères)
+public/data/*.geojson
+public/data/*.csv
