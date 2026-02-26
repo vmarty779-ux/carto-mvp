@@ -1,19 +1,14 @@
-node_modules
-dist
-.DS_Store
+# Données carto : ignorer tout par défaut…
+public/data/*
 
-# Fichiers lourds / non nécessaires au code
-*.mp4
-*.mov
-*.avi
-*.png
-*.jpg
-*.jpeg
-*.qgz
+# …mais autoriser les fichiers légers nécessaires au MVP
+!public/data/regions.geojson
+!public/data/departements.geojson
+!public/data/communes.geojson
+!public/data/data_region.csv
+!public/data/data_departement.csv
+!public/data/data_commune.csv
+
+# formats lourds à garder hors git
 *.gpkg
-*.zip
-*.7z
-
-# Données carto (on garde seulement des versions légères)
-public/data/*.geojson
-public/data/*.csv
+*.qgz
