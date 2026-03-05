@@ -46,7 +46,7 @@ export default function App() {
     <div style={styles.app}>
       {/* HEADER */}
       <header style={styles.header}>
-        <div style={styles.logo}>ZONELEAN</div>
+        <div style={styles.logo}>GEOLEAN</div>
 
         <div style={styles.userCircle} title="Compte">
           <svg
