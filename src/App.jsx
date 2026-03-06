@@ -7,13 +7,23 @@ export default function App() {
   const [indicator, setIndicator] = useState("part_cspp");
   const [year, setYear] = useState(2022);
 
-  // Geoly UI
+  // Export
+  const [exportRows, setExportRows] = useState([]); // [{ geo_id, nom, valeur }]
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [emailInput, setEmailInput] = useState(localStorage.getItem("geolean_email") || "");
+  const [consent, setConsent] = useState(false);
+  const [exportError, setExportError] = useState("");
+  const [isSubmittingEmail, setIsSubmittingEmail] = useState(false);
+
+  const isUnlocked = Boolean(localStorage.getItem("geolean_email"));
+
+  // Geoly UI (tooltip + tutoriel)
   const [isGeolyHover, setIsGeolyHover] = useState(false);
   const [isTourOpen, setIsTourOpen] = useState(false);
   const [tourStep, setTourStep] = useState(0); // 0..3
   const [spotRect, setSpotRect] = useState(null);
 
-  // Refs (IMPORTANT: on met les refs sur des wrappers div, pas sur <label>)
+  // Refs tutoriel
   const scaleRef = useRef(null);
   const modeRef = useRef(null);
   const indicatorRef = useRef(null);
@@ -41,10 +51,9 @@ export default function App() {
     []
   );
 
-  const availableIndicators =
-    renderMode === "circles" ? INDICATORS_VOLUMES : INDICATORS_PARTS;
+  const availableIndicators = renderMode === "circles" ? INDICATORS_VOLUMES : INDICATORS_PARTS;
 
-  // Si on change de mode, forcer un indicateur compatible
+  // Force un indicateur compatible si on change de mode
   useEffect(() => {
     const allowed = new Set(availableIndicators.map((i) => i.value));
     if (!allowed.has(indicator)) {
@@ -53,6 +62,88 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [renderMode]);
 
+  // ---------- Export helpers ----------
+  function downloadCsv({ rows, scale, indicator, year }) {
+    const safe = (v) => String(v ?? "").replaceAll('"', '""');
+
+    const header = "geo_id,nom,indicateur,annee,valeur\n";
+    const lines = rows
+      .map((r) =>
+        `"${safe(r.geo_id)}","${safe(r.nom)}","${safe(indicator)}","${safe(year)}","${safe(r.valeur)}"`
+      )
+      .join("\n");
+
+    const csv = header + lines + "\n";
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `geolean_${scale}_${indicator}_${year}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+    URL.revokeObjectURL(url);
+  }
+
+  function onClickExport() {
+    setExportError("");
+
+    if (!exportRows || exportRows.length === 0) {
+      setExportError("Aucune donnée disponible pour l’export. Essayez de changer un paramètre.");
+      return;
+    }
+
+    if (!isUnlocked) {
+      setIsExportModalOpen(true);
+      return;
+    }
+
+    downloadCsv({ rows: exportRows, scale, indicator, year });
+  }
+
+  async function submitEmailAndUnlock() {
+    setExportError("");
+
+    const email = emailInput.trim();
+    if (!email.includes("@")) {
+      setExportError("Email invalide.");
+      return;
+    }
+    if (!consent) {
+      setExportError("Merci de cocher la case de consentement.");
+      return;
+    }
+
+    setIsSubmittingEmail(true);
+    try {
+      // ⚠️ Nécessite /api/subscribe (serverless function Vercel)
+      const res = await fetch("/api/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, source: "geolean" }),
+      });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || "Erreur lors de l’inscription.");
+      }
+
+      localStorage.setItem("geolean_email", email);
+
+      setIsExportModalOpen(false);
+
+      // Export immédiat
+      downloadCsv({ rows: exportRows, scale, indicator, year });
+    } catch (e) {
+      setExportError(String(e.message || e));
+    } finally {
+      setIsSubmittingEmail(false);
+    }
+  }
+
+  // ---------- Tutoriel Geoly ----------
   function openTour() {
     setIsTourOpen(true);
     setTourStep(0);
@@ -85,7 +176,6 @@ export default function App() {
     return yearRef;
   }
 
-  // Recalcule le spotlight à chaque step + resize/scroll
   useEffect(() => {
     if (!isTourOpen) return;
 
@@ -103,7 +193,6 @@ export default function App() {
         h: r.height + padding * 2,
       });
 
-      // Scroll dans la sidebar si besoin
       try {
         el.scrollIntoView({ block: "nearest", behavior: "smooth" });
       } catch {}
@@ -119,9 +208,9 @@ export default function App() {
     };
   }, [isTourOpen, tourStep]);
 
-  // ESC pour fermer, Enter pour avancer
   useEffect(() => {
     if (!isTourOpen) return;
+
     const onKeyDown = (e) => {
       if (e.key === "Escape") closeTour();
       if (e.key === "Enter") {
@@ -129,11 +218,11 @@ export default function App() {
         else closeTour();
       }
     };
+
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isTourOpen, tourStep]);
 
-  // Positionne la carte du tutoriel près du spotlight (sans sortir de l'écran)
   const tourCardPos = useMemo(() => {
     if (!spotRect) return { left: 24, top: 120 };
 
@@ -141,16 +230,12 @@ export default function App() {
     const cardH = 170;
     const margin = 12;
 
-    // par défaut : sous le spotlight
     let left = spotRect.x;
     let top = spotRect.y + spotRect.h + margin;
 
-    // si ça dépasse en bas, on met au-dessus
     if (top + cardH > window.innerHeight - margin) {
       top = Math.max(margin, spotRect.y - cardH - margin);
     }
-
-    // si ça dépasse à droite, on décale à gauche
     if (left + cardW > window.innerWidth - margin) {
       left = Math.max(margin, window.innerWidth - cardW - margin);
     }
@@ -165,14 +250,7 @@ export default function App() {
         <div style={styles.logo}>GEOLEAN</div>
 
         <div style={styles.userCircle} title="Compte">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="22"
-            height="22"
-            viewBox="0 0 24 24"
-            fill="white"
-            aria-hidden="true"
-          >
+          <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="white">
             <path d="M12 12c2.7 0 5-2.3 5-5s-2.3-5-5-5-5 2.3-5 5 2.3 5 5 5zm0 2c-3.3 0-10 1.7-10 5v3h20v-3c0-3.3-6.7-5-10-5z" />
           </svg>
         </div>
@@ -197,11 +275,7 @@ export default function App() {
           <div ref={modeRef} style={styles.fieldBlock}>
             <label style={styles.label}>
               Mode d’affichage
-              <select
-                style={styles.select}
-                value={renderMode}
-                onChange={(e) => setRenderMode(e.target.value)}
-              >
+              <select style={styles.select} value={renderMode} onChange={(e) => setRenderMode(e.target.value)}>
                 <option value="choropleth">Choroplèthe</option>
                 <option value="circles">Cercles (centroid)</option>
               </select>
@@ -231,6 +305,28 @@ export default function App() {
             </label>
           </div>
 
+          {/* EXPORT */}
+          <div style={{ marginTop: 6 }}>
+            <button
+              onClick={onClickExport}
+              style={{
+                ...styles.exportBtn,
+                ...(isUnlocked ? styles.exportBtnActive : styles.exportBtnLocked),
+              }}
+              title={isUnlocked ? "Exporter les données" : "Débloquer l’export de données"}
+            >
+              Exporter les données
+            </button>
+
+            {exportError && <div style={styles.inlineError}>{exportError}</div>}
+
+            {!isUnlocked && (
+              <div style={styles.smallNote}>
+                Astuce : l’export se débloque après inscription (email).
+              </div>
+            )}
+          </div>
+
           <div style={styles.hint}>
             {renderMode === "choropleth"
               ? "Choroplèthe : indicateurs en parts (%)."
@@ -239,7 +335,13 @@ export default function App() {
         </aside>
 
         <main style={styles.mapContainer}>
-          <MapView scale={scale} indicator={indicator} year={year} renderMode={renderMode} />
+          <MapView
+            scale={scale}
+            indicator={indicator}
+            year={year}
+            renderMode={renderMode}
+            onExportRows={setExportRows}
+          />
         </main>
       </div>
 
@@ -271,7 +373,54 @@ export default function App() {
         />
       </div>
 
-      {/* OVERLAY TUTORIEL (spotlight + carte positionnée près du champ) */}
+      {/* MODAL EXPORT (email) */}
+      {isExportModalOpen && (
+        <div style={styles.modalOverlay} onMouseDown={() => setIsExportModalOpen(false)}>
+          <div style={styles.modalCard} onMouseDown={(e) => e.stopPropagation()}>
+            <div style={{ fontWeight: 800, marginBottom: 8 }}>Débloquer l’export GEOLEAN</div>
+
+            <div style={{ fontSize: 13, color: "#333", lineHeight: 1.35 }}>
+              Entrez votre email pour :
+              <ul style={{ margin: "8px 0 0 18px" }}>
+                <li>télécharger le CSV</li>
+                <li>recevoir vos exports par email</li>
+                <li>participer au tirage au sort</li>
+              </ul>
+            </div>
+
+            <div style={{ marginTop: 12 }}>
+              <input
+                value={emailInput}
+                onChange={(e) => setEmailInput(e.target.value)}
+                placeholder="votre@email.com"
+                style={styles.modalInput}
+                type="email"
+              />
+
+              <label style={styles.modalConsent}>
+                <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+                <span>
+                  J’accepte d’être contacté(e) par GEOLEAN / MediaLean au sujet des analyses et de l’outil.
+                </span>
+              </label>
+
+              {exportError && <div style={styles.modalError}>{exportError}</div>}
+
+              <div style={styles.modalBtns}>
+                <button style={styles.btnGhost} onClick={() => setIsExportModalOpen(false)}>
+                  Annuler
+                </button>
+
+                <button style={styles.btnPrimary} onClick={submitEmailAndUnlock} disabled={isSubmittingEmail}>
+                  {isSubmittingEmail ? "Envoi..." : "Débloquer & exporter"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* OVERLAY TUTORIEL */}
       {isTourOpen && spotRect && (
         <div style={styles.tourOverlay} onMouseDown={closeTour}>
           <div
@@ -290,9 +439,7 @@ export default function App() {
             onMouseDown={(e) => e.stopPropagation()}
           >
             <div style={{ fontWeight: 800, marginBottom: 6 }}>Tutoriel Geoly</div>
-            <div style={{ fontSize: 13, color: "#333", lineHeight: 1.35 }}>
-              {getStepText(tourStep)}
-            </div>
+            <div style={{ fontSize: 13, color: "#333", lineHeight: 1.35 }}>{getStepText(tourStep)}</div>
 
             <div style={styles.tourBtns}>
               <button style={styles.btnGhost} onClick={prevStep} disabled={tourStep === 0}>
@@ -376,9 +523,7 @@ const styles = {
     overflowY: "auto",
   },
 
-  fieldBlock: {
-    padding: 0,
-  },
+  fieldBlock: { padding: 0 },
 
   label: {
     display: "grid",
@@ -392,16 +537,104 @@ const styles = {
   },
 
   hint: {
-    marginTop: 6,
+    marginTop: 10,
     fontSize: 12,
     color: "#666",
     lineHeight: 1.35,
+  },
+
+  smallNote: {
+    marginTop: 8,
+    fontSize: 12,
+    color: "#666",
+    lineHeight: 1.35,
+  },
+
+  inlineError: {
+    marginTop: 8,
+    fontSize: 13,
+    color: "#8a1f1f",
+    background: "rgba(243,194,194,0.35)",
+    border: "1px solid #f3c2c2",
+    borderRadius: 10,
+    padding: 10,
   },
 
   mapContainer: {
     flex: 1,
     height: "100%",
     minWidth: 0,
+  },
+
+  // Export button
+  exportBtn: {
+    width: "100%",
+    padding: "10px 12px",
+    borderRadius: 10,
+    border: "1px solid #d9d9d9",
+    fontWeight: 800,
+    cursor: "pointer",
+  },
+  exportBtnLocked: {
+    background: "#f2f2f2",
+    color: "#888",
+  },
+  exportBtnActive: {
+    background: "#0b2c5f",
+    color: "#fff",
+    border: "1px solid #0b2c5f",
+  },
+
+  // Modal export
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.45)",
+    zIndex: 3000,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+  },
+  modalCard: {
+    width: "min(520px, 100%)",
+    background: "#fff",
+    borderRadius: 14,
+    padding: 14,
+    border: "1px solid #e5e5e5",
+    boxShadow: "0 10px 30px rgba(0,0,0,0.25)",
+  },
+  modalInput: {
+    width: "100%",
+    padding: "10px 12px",
+    borderRadius: 10,
+    border: "1px solid #d9d9d9",
+    fontSize: 14,
+    outline: "none",
+  },
+  modalConsent: {
+    display: "flex",
+    gap: 10,
+    alignItems: "flex-start",
+    marginTop: 10,
+    fontSize: 12,
+    color: "#333",
+    lineHeight: 1.35,
+  },
+  modalError: {
+    marginTop: 10,
+    fontSize: 13,
+    color: "#8a1f1f",
+    background: "rgba(243,194,194,0.35)",
+    border: "1px solid #f3c2c2",
+    borderRadius: 10,
+    padding: 10,
+  },
+  modalBtns: {
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: 10,
+    marginTop: 12,
   },
 
   // Geoly
@@ -414,17 +647,15 @@ const styles = {
     height: 86,
     userSelect: "none",
   },
-
   geolyImg: {
     width: 86,
     height: "auto",
     cursor: "pointer",
     filter: "drop-shadow(0 8px 18px rgba(0,0,0,0.18))",
   },
-
   geolyBubble: {
     position: "absolute",
-    left: 92, // à droite de Geoly, sans le déplacer
+    left: 92,
     bottom: 44,
     background: "#ffffff",
     border: "1px solid #e5e5e5",
@@ -437,14 +668,13 @@ const styles = {
     whiteSpace: "nowrap",
   },
 
-  // Tutoriel overlay
+  // Tutoriel
   tourOverlay: {
     position: "fixed",
     inset: 0,
     background: "rgba(0,0,0,0.55)",
     zIndex: 2000,
   },
-
   spotlight: {
     position: "fixed",
     borderRadius: 12,
@@ -452,7 +682,6 @@ const styles = {
     outline: "2px solid rgba(255,255,255,0.85)",
     background: "rgba(255,255,255,0.06)",
   },
-
   tourCard: {
     position: "fixed",
     width: 360,
@@ -462,7 +691,6 @@ const styles = {
     border: "1px solid #e5e5e5",
     boxShadow: "0 10px 30px rgba(0,0,0,0.25)",
   },
-
   tourBtns: {
     display: "flex",
     justifyContent: "space-between",
@@ -470,22 +698,22 @@ const styles = {
     marginTop: 12,
   },
 
+  // Buttons
   btnPrimary: {
-    padding: "8px 10px",
+    padding: "10px 12px",
     borderRadius: 10,
     border: "none",
     background: "#0b2c5f",
     color: "#fff",
     cursor: "pointer",
-    fontWeight: 700,
+    fontWeight: 800,
   },
-
   btnGhost: {
-    padding: "8px 10px",
+    padding: "10px 12px",
     borderRadius: 10,
     border: "1px solid #d9d9d9",
     background: "#fff",
     cursor: "pointer",
-    fontWeight: 700,
+    fontWeight: 800,
   },
 };
