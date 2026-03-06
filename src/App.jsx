@@ -382,9 +382,9 @@ export default function App() {
             <div style={{ fontSize: 13, color: "#333", lineHeight: 1.35 }}>
               Entrez votre email pour :
               <ul style={{ margin: "8px 0 0 18px" }}>
+                <li>débloquer l'export des données</li>
                 <li>télécharger le CSV</li>
-                <li>recevoir vos exports par email</li>
-                <li>participer au tirage au sort</li>
+                <li>participer au tirage au sort pour une journée gratuite sur MediaLean</li>
               </ul>
             </div>
 
